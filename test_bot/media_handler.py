@@ -11,7 +11,15 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from crud import save_client_request, get_client_request, update_client_request
 
 load_dotenv()
-ADMIN_CHAT_ID = os.getenv("ADMIN_ID")  # ID администратора
+
+ADMIN_CHAT_IDS = {
+    "Филиал 1": os.getenv("ADMIN_ID_1"),
+    "Филиал 2": os.getenv("ADMIN_ID_2"),
+    "Филиал 3": os.getenv("ADMIN_ID_3"),
+}
+
+ADMIN_CHAT_ID_MAIN = os.getenv("ADMIN_ID_MAIN") # ID галовного филиала
+
 logging.basicConfig(level=logging.INFO)
 
 # Инициализация хранилища и бота
@@ -35,7 +43,8 @@ async def start(message: types.Message):
 @dp.message(
     lambda message: F.content_type.in_(
         [types.ContentType.TEXT, types.ContentType.PHOTO, types.ContentType.VIDEO])
-        and str(message.chat.id) != ADMIN_CHAT_ID)
+        and str(message.chat.id) != ADMIN_CHAT_ID_MAIN
+        and str(message.chat.id) not in ADMIN_CHAT_IDS.values())
 async def get_content(message: types.Message):
     user_id = message.from_user.id
     content = None
@@ -55,7 +64,7 @@ async def get_content(message: types.Message):
     request_id = save_client_request(user_id, content_type, content)
 
     # Выбор филиала
-    branches = ["Филиал 1", "Филиал 2", "Филиал 3"]
+    branches = list(ADMIN_CHAT_IDS.keys())
     markup = InlineKeyboardBuilder()
     for branch in branches:
         markup.add(types.InlineKeyboardButton(
@@ -103,7 +112,10 @@ async def confirm_send(callback_query: types.CallbackQuery):
     request_data = get_client_request(request_id)
     content = request_data.get("content") or request_data.get("photo_id") or request_data.get("video_id")
     branch = request_data.get("branch")
+    logging.info(f"Выбранный Филиала - {branch}")
 
+    branch_admin_id = ADMIN_CHAT_IDS.get(branch)
+    logging.info(f"ID выбранного Филиала - {branch_admin_id}")
     await callback_query.message.answer("Ваше сообщение отправлено администратору. Ожидайте")
 
     # Создание клавиатуры с кнопками
@@ -115,7 +127,7 @@ async def confirm_send(callback_query: types.CallbackQuery):
 
     # Отправка сообщения администратору
     await bot.send_message(
-        ADMIN_CHAT_ID,
+        branch_admin_id,
         f"Новое сообщение от клиента.\nФилиал: {branch}\n"
         f"Контент: {content}\n\nПожалуйста, ответьте на это сообщение."
         f"\nID клиента: {user_id}\nID обращения: {request_id}",
@@ -124,6 +136,12 @@ async def confirm_send(callback_query: types.CallbackQuery):
 
     logging.info(f"Администратору выслано сообщение от клиента (ID обращения: {request_id}).")
 
+    # Отправка сообщения в головной филиал (только для просмотра)
+    await bot.send_message(
+        ADMIN_CHAT_ID_MAIN,
+        f"Просмотр сообщения от клиента.\nФилиал: {branch}\n"
+        f"Контент: {content}\n\nID клиента: {user_id}\nID обращения: {request_id}"
+    )
 
 # Шаг 5: Обработка редактирования сообщения
 @dp.callback_query(F.data.startswith("edit_message_"))
@@ -155,7 +173,7 @@ async def reply_to_client(callback_query: types.CallbackQuery, state: FSMContext
 
 
 # Шаг 7: Обработка ввода ответа администратора
-@dp.message(lambda message: str(message.chat.id) == ADMIN_CHAT_ID)
+@dp.message(lambda message: str(message.chat.id) in ADMIN_CHAT_IDS.values())
 async def admin_response(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
     request_id = user_data.get("request_id")
@@ -200,6 +218,12 @@ async def send_to_client(callback_query: types.CallbackQuery):
         await bot.send_message(client_id, f"Ответ от администратора: {admin_message}")
         await callback_query.answer("Ответ отправлен клиенту.")
         await callback_query.message.answer("Ваш ответ отправлен клиенту.")
+
+        # Дублирование в головной филиал
+        await bot.send_message(ADMIN_CHAT_ID_MAIN,
+                               f"Ответ отправлен клиенту ID: {client_id}."
+                               f"\nID обращения: {request_id}"
+                               f"\nСообщение администратора: {admin_message}")
     else:
         logging.error("Ответ администратора не найден в запросе.")
 
