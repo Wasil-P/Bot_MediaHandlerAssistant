@@ -77,6 +77,7 @@ async def get_content(message: types.Message):
 # Шаг 3: Выбор филиала
 @dp.callback_query(F.data.startswith("branch_"))
 async def select_branch(callback_query: types.CallbackQuery):
+    await callback_query.answer()  # Останавливаем анимацию загрузки
     data = callback_query.data.split("_")
     branch = data[1]
     request_id = data[2]  # Извлекаем ID обращения из callback_data
@@ -107,6 +108,7 @@ async def select_branch(callback_query: types.CallbackQuery):
 # Шаг 4: Подтверждение отправки
 @dp.callback_query(F.data.startswith("confirm_send_"))
 async def confirm_send(callback_query: types.CallbackQuery):
+    await callback_query.answer()  # Останавливаем анимацию загрузки
     request_id = callback_query.data.split("_")[2]
     user_id = callback_query.from_user.id
 
@@ -148,6 +150,7 @@ async def confirm_send(callback_query: types.CallbackQuery):
 # Шаг 5: Обработка редактирования сообщения
 @dp.callback_query(F.data.startswith("edit_message_"))
 async def edit_message(callback_query: types.CallbackQuery):
+    await callback_query.answer()  # Останавливаем анимацию загрузки
     request_id = callback_query.data.split("_")[2]
     user_id = callback_query.from_user.id
 
@@ -162,6 +165,7 @@ async def edit_message(callback_query: types.CallbackQuery):
 # Шаг 6: Ответ администратора клиенту
 @dp.callback_query(F.data.startswith("reply-to-client_"))
 async def reply_to_client(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()  # Останавливаем анимацию загрузки
     data = callback_query.data.split("_")
     user_id = data[1]  # ID обращения
     request_id = data[2]  # ID клиента
@@ -203,6 +207,7 @@ async def admin_response(message: types.Message, state: FSMContext):
 # Шаг 8: Подтверждение отправки сообщения клиенту
 @dp.callback_query(F.data.startswith("send-to-client_"))
 async def send_to_client(callback_query: types.CallbackQuery):
+    await callback_query.answer()  # Останавливаем анимацию загрузки
     data = callback_query.data.split("_")
     client_id = data[1]  # ID клиента
     request_id = data[2]  # ID обращения
@@ -233,6 +238,7 @@ async def send_to_client(callback_query: types.CallbackQuery):
 # Шаг 9: Обработка редактирования ответа
 @dp.callback_query(F.data.startswith("edit-response_"))
 async def edit_response(callback_query: types.CallbackQuery):
+    await callback_query.answer()  # Останавливаем анимацию загрузки
     client_id = callback_query.data.split("_")[1]
 
     # Информируем администратора о редактировании
