@@ -8,7 +8,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardButton
 from dotenv import load_dotenv
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+
 from crud import save_client_request, get_client_request, update_client_request
+from db import init_database
 
 load_dotenv()
 
@@ -239,4 +241,8 @@ async def edit_response(callback_query: types.CallbackQuery):
 
 # Основной запуск бота
 if __name__ == "__main__":
+    # Инициализация базы данных
+    init_database()
+
+    # Запуск бота
     dp.run_polling(bot)
