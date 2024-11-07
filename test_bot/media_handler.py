@@ -9,7 +9,7 @@ from aiogram.types import InlineKeyboardButton
 from dotenv import load_dotenv
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from crud import save_client_request, get_client_request, update_client_request
+from crud import save_client_request, get_client_request, update_client_request, add_request_item, delete_request_items
 from db import init_database
 
 load_dotenv()
@@ -57,8 +57,16 @@ async def start(message: types.Message):
 async def new_request(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()  # Останавливаем анимацию загрузки
     markup = InlineKeyboardBuilder()
-    for branch in ["Филиал 1", "Филиал 2", "Филиал 3", "Головной офис"]:
-        markup.add(InlineKeyboardButton(text=branch, callback_data=f"branch_{branch}"))
+
+    markup.row(
+        InlineKeyboardButton(text="Филиал 1", callback_data="branch_Филиал 1"),
+        InlineKeyboardButton(text="Филиал 2", callback_data="branch_Филиал 2")
+    )
+    markup.row(
+        InlineKeyboardButton(text="Филиал 3", callback_data="branch_Филиал 3"),
+        InlineKeyboardButton(text="Головной офис", callback_data="branch_Головной офис")
+    )
+
     await callback_query.message.answer(
         "Пожалуйста, выберите, куда направить ваше обращение:\n"
         "1 - Филиал 1\n2 - Филиал 2\n3 - Филиал 3\n4 - Головной офис",
@@ -112,33 +120,44 @@ async def select_branch(callback_query: types.CallbackQuery, state: FSMContext):
 async def get_content(message: types.Message, state: FSMContext):
     data = await state.get_data()
     branch = data.get("selected_branch")
-    user_id = message.from_user.id
     request_id = data.get("request_id")  # Получаем request_id
-    logging.info(f"Request ID: {request_id}")
+    logging.info(f"Функция get_content. Request ID: {request_id}")
+    # Получение контента и типа содержимого
     # Получение контента и типа содержимого
     content = None
+    content_type = None
     if message.text:
         content = message.text
+        content_type = "text"
     elif message.photo:
         content = message.photo[-1].file_id
+        content_type = "photo"
     elif message.video:
         content = message.video.file_id
+        content_type = "video"
 
-    logging.info(f"Контент - {content}")
-    # Сохранение обращения клиента и получение request_id
-    update_client_request(request_id, content=content)
+    if content and content_type:
+        add_request_item(request_id, content_type, content)  # Сохраняем контент как элемент запроса
+        logging.info(f"Добавлен контент {content_type} к запросу {request_id}")
+
+        # Получение всего контента, связанного с request_id
+    request_data = get_client_request(request_id)
+    content_items = "\n".join(
+        f"{item['content_type']}: {item['content']}" for item in request_data.get("items", [])
+    )
 
     # Подтверждение отправки
     markup = InlineKeyboardBuilder()
     markup.add(
         InlineKeyboardButton(text="Отправить", callback_data=f"confirm_send_{request_id}"),
-        InlineKeyboardButton(text="Редактировать", callback_data=f"edit_message_{request_id}")
+        InlineKeyboardButton(text="Редактировать", callback_data=f"edit_message_{request_id}"),
+        InlineKeyboardButton(text="Добавить", callback_data=f"add_content_{request_id}")
     )
     await message.answer(
-        f"Просмотрите сообщение:\nОтправка: {content}\nФилиал: {branch}\nГотовы отправить или хотите отредактировать?",
+        f"Просмотрите сообщение:\nОтправка: {content_items}\nФилиал: {branch}\nГотовы отправить или хотите отредактировать?",
         reply_markup=markup.as_markup()
     )
-    logging.info(f"Сообщение админу отправлено")
+    logging.info(f"Состояния выбора меню")
 
 # Шаг 5: Подтверждение отправки
 @dp.callback_query(F.data.startswith("confirm_send_"))
@@ -148,9 +167,11 @@ async def confirm_send(callback_query: types.CallbackQuery):
     logging.info(f"Функция confirm_send, request_id - {request_id}")
     request_data = get_client_request(request_id)
     user_id = request_data.get("user_id")
-    content = request_data.get("content")
     branch = request_data.get("branch")
     branch_admin_id = ADMIN_CHAT_IDS.get(branch)
+    content_items = "\n".join(
+        f"{item['content_type']}: {item['content']}" for item in request_data.get("items", [])
+    )
 
     # Сообщение пользователю
     await callback_query.message.answer("Спасибо за ваше обращение! Мы свяжемся с вами в ближайшее время.")
@@ -164,16 +185,16 @@ async def confirm_send(callback_query: types.CallbackQuery):
     # # Отправка обращения администраторам филиала и головного офиса
     if branch_admin_id:
         logging.info(f"Функция confirm_send, id Филиала- {branch_admin_id}")
-        await bot.send_message(branch_admin_id, f"Новое обращение от клиента{user_id}:\n"
-                                                f"{content}",
+        await bot.send_message(branch_admin_id, f"Новое обращение от клиента {user_id}:\n"
+                                                f"{content_items}",
                                                 reply_markup=markup.as_markup()  # Добавляем клавиатуру к сообщению
                                                 )
-        await bot.send_message(ADMIN_CHAT_ID_MAIN, f"Новое обращение в {branch}\nот клиента - {user_id}:\n"
-                                                f"Сообщение: {content}")
+        await bot.send_message(ADMIN_CHAT_ID_MAIN, f"Новое обращение в {branch}\nот клиента - {user_id}.\n"
+                                                f"Сообщение: {content_items}")
     else:
         logging.info(f"Функция confirm_send, id Головного филиала- {ADMIN_CHAT_ID_MAIN}")
-        await bot.send_message(ADMIN_CHAT_ID_MAIN, f"Новое обращение {request_id}\nв головной офис\nот клиента - {user_id}:\n"
-                                                    f"Сообщение: {content}",
+        await bot.send_message(ADMIN_CHAT_ID_MAIN, f"Новое обращение {request_id}\nв головной офис\nот клиента - {user_id}.\n"
+                                                    f"Сообщение: {content_items}",
                                                     reply_markup=markup.as_markup())
 
 
@@ -181,12 +202,30 @@ async def confirm_send(callback_query: types.CallbackQuery):
 # Шаг 6: Редактирование сообщения
 @dp.callback_query(F.data.startswith("edit_message_"))
 async def edit_message(callback_query: types.CallbackQuery, state: FSMContext):
+    request_id = callback_query.data.split("_")[2]
     await callback_query.answer()  # Останавливаем анимацию загрузки
+    delete_request_items(request_id)  # функция для удаления записей из таблицы request_items
     await callback_query.message.answer("Введите новое сообщение для отправки.")
     await state.set_state(Form.waiting_for_content)  # указание состояния
 
 
-# Шаг 7: Ответ администратора клиенту
+# Шаг 7: Обработка добавления нового контента к запросу
+@dp.callback_query(F.data.startswith("add_content_"))
+async def add_more_content(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()  # Останавливаем анимацию загрузки
+    request_id = callback_query.data.split("_")[2]
+
+    # Сообщаем пользователю, что он может добавить еще одно сообщение, фото или видео
+    await callback_query.message.answer(
+        "Пожалуйста, отправьте дополнительный текст, фото или видео, которые вы хотите добавить к обращению."
+    )
+
+    # Сохраняем текущий request_id, чтобы знать, к какому запросу добавлять элементы
+    await state.update_data(request_id=request_id)
+    await state.set_state(Form.waiting_for_content)  # Возвращаемся к ожиданию контента
+
+
+# Шаг 8: Ответ администратора клиенту
 @dp.callback_query(F.data.startswith("reply-to-client_"))
 async def reply_to_client(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()  # Останавливаем анимацию загрузки
@@ -202,7 +241,7 @@ async def reply_to_client(callback_query: types.CallbackQuery, state: FSMContext
     await state.update_data(request_id=request_id, client_id=user_id)
 
 
-# Шаг 8: Обработка ввода ответа администратора
+# Шаг 9: Обработка ввода ответа администратора
 @dp.message(lambda message: str(message.chat.id) in ADMIN_CHAT_IDS.values()
             or str(message.chat.id) == ADMIN_CHAT_ID_MAIN)
 async def admin_response(message: types.Message, state: FSMContext):
@@ -229,7 +268,7 @@ async def admin_response(message: types.Message, state: FSMContext):
     else:
         await message.answer("Не удалось определить ID обращения или клиента.")
 
-# Шаг 9: Подтверждение отправки сообщения клиенту
+# Шаг 10: Подтверждение отправки сообщения клиенту
 @dp.callback_query(F.data.startswith("send-to-client_"))
 async def send_to_client(callback_query: types.CallbackQuery):
     await callback_query.answer()  # Останавливаем анимацию загрузки
@@ -261,7 +300,7 @@ async def send_to_client(callback_query: types.CallbackQuery):
         logging.error("Ответ администратора не найден в запросе.")
 
 
-# Шаг 10: Обработка редактирования ответа
+# Шаг 11: Обработка редактирования ответа
 @dp.callback_query(F.data.startswith("edit-response_"))
 async def edit_response(callback_query: types.CallbackQuery):
     await callback_query.answer()  # Останавливаем анимацию загрузки
