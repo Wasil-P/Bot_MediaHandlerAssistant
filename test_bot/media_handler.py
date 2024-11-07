@@ -32,144 +32,168 @@ dp = Dispatcher(storage=storage)  # Передаем storage как именов
 
 # Определение состояний
 class Form(StatesGroup):
+    choosing_action = State()
+    choosing_branch = State()
+    waiting_for_content = State()
     waiting_for_response = State()
 
 
-# Шаг 1:  Обработка команды /start
+# Шаг 1: Главное меню - команда /start
 @dp.message(Command("start"))
 async def start(message: types.Message):
-    await message.answer("Добро пожаловать! Отправьте ваше сообщение, фото или видео.")
-
-
-# Шаг 2:  Обработка получения текста, фото или видео от клиента
-@dp.message(
-    lambda message: F.content_type.in_(
-        [types.ContentType.TEXT, types.ContentType.PHOTO, types.ContentType.VIDEO])
-        and str(message.chat.id) != ADMIN_CHAT_ID_MAIN
-        and str(message.chat.id) not in ADMIN_CHAT_IDS.values())
-async def get_content(message: types.Message):
-    user_id = message.from_user.id
-    content = None
-    content_type = None
-
-    if message.text:
-        content = message.text
-        content_type = "text"
-    elif message.photo:
-        content = message.photo[-1].file_id
-        content_type = "photo"
-    elif message.video:
-        content = message.video.file_id
-        content_type = "video"
-
-    # Сохранение обращения клиента и получение request_id
-    request_id = save_client_request(user_id, content_type, content)
-
-    # Выбор филиала
-    branches = list(ADMIN_CHAT_IDS.keys())
     markup = InlineKeyboardBuilder()
-    for branch in branches:
-        markup.add(types.InlineKeyboardButton(
-            text=branch, callback_data=f"branch_{branch}_{request_id}"))
-    await message.answer("Выберите филиал:", reply_markup=markup.as_markup())
-
-
-# Шаг 3: Выбор филиала
-@dp.callback_query(F.data.startswith("branch_"))
-async def select_branch(callback_query: types.CallbackQuery):
-    await callback_query.answer()  # Останавливаем анимацию загрузки
-    data = callback_query.data.split("_")
-    branch = data[1]
-    request_id = data[2]  # Извлекаем ID обращения из callback_data
-
-    user_id = callback_query.from_user.id
-    update_client_request(request_id, branch=branch)  # Обновляем филиал в обращении
-
-    # Получаем данные обращения
-    request_data = get_client_request(request_id)
-    content = request_data.get("content") or request_data.get("photo_id") or request_data.get("video_id")
-
-    # Подтверждение или редактирование
-    markup = InlineKeyboardBuilder()
-    markup.add(types.InlineKeyboardButton(
-        text="Отправить администратору", callback_data=f"confirm_send_{request_id}"))
-    markup.add(types.InlineKeyboardButton(
-        text="Редактировать", callback_data=f"edit_message_{request_id}"))
-
-    await callback_query.message.answer(
-        f"Просмотрите сообщение:\n "
-        f"Отправка: {content}\n "
-        f"Филиал: {branch}\n "
-        f"Готовы отправить или хотите отредактировать?",
+    markup.add(
+        InlineKeyboardButton(text="Направить обращение", callback_data="new_request"),
+        InlineKeyboardButton(text="О боте", callback_data="about_bot")
+    )
+    await message.answer(
+        "Добрый день! Чем я могу вам помочь? Выберите один из вариантов:",
         reply_markup=markup.as_markup()
     )
 
 
-# Шаг 4: Подтверждение отправки
+# Шаг 2: Обработка выбора в главном меню
+@dp.callback_query(F.data == "new_request")
+async def new_request(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()  # Останавливаем анимацию загрузки
+    markup = InlineKeyboardBuilder()
+    for branch in ["Филиал 1", "Филиал 2", "Филиал 3", "Головной офис"]:
+        markup.add(InlineKeyboardButton(text=branch, callback_data=f"branch_{branch}"))
+    await callback_query.message.answer(
+        "Пожалуйста, выберите, куда направить ваше обращение:\n"
+        "1 - Филиал 1\n2 - Филиал 2\n3 - Филиал 3\n4 - Головной офис",
+        reply_markup=markup.as_markup()
+    )
+    await state.set_state(Form.choosing_branch)  # указание состояния
+
+
+@dp.callback_query(F.data == "about_bot")
+async def about_bot(callback_query: types.CallbackQuery):
+    await callback_query.answer()  # Останавливаем анимацию загрузки
+    markup = InlineKeyboardBuilder()
+    markup.add(InlineKeyboardButton(text="Направить обращение", callback_data="new_request"))
+    await callback_query.message.answer(
+        "Я — виртуальный помощник, созданный для направления ваших обращений в наши филиалы или Головной офис. "
+        "Чем могу помочь вам сегодня?",
+        reply_markup=markup.as_markup()
+    )
+
+
+# Шаг 3: Обработка выбора филиала или головного офиса
+@dp.callback_query(F.data.startswith("branch_"))
+async def select_branch(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()  # Останавливаем анимацию загрузки
+    branch = callback_query.data.split("_")[1]
+    logging.info(f"Функция select_branch. Филиал - {branch}")
+    # Сохранение запроса клиента с филиалом
+    user_id = callback_query.from_user.id
+    request_id = save_client_request(user_id, branch=branch)
+
+    # Сохраняем request_id и филиал в состоянии
+    await state.update_data(selected_branch=branch, request_id=request_id)
+
+    if branch == "Головной офис":
+        await callback_query.message.answer(
+            "Ваше обращение будет направлено в Головной офис. Вы можете отправить видео, фото или текст."
+        )
+    else:
+        await callback_query.message.answer(
+            "Ваше обращение будет направлено в выбранный филиал и дублировано в Головной офис. "
+            "Вы можете отправить видео, фото или текст."
+        )
+    await state.set_state(Form.waiting_for_content)  # указание состояния
+
+
+# Шаг 4: Получение содержимого обращения
+@dp.message(lambda message: F.content_type.in_(
+    [types.ContentType.TEXT, types.ContentType.PHOTO, types.ContentType.VIDEO])
+                            and str(message.chat.id) != ADMIN_CHAT_ID_MAIN
+                            and str(message.chat.id) not in ADMIN_CHAT_IDS.values())
+async def get_content(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    branch = data.get("selected_branch")
+    user_id = message.from_user.id
+    request_id = data.get("request_id")  # Получаем request_id
+    logging.info(f"Request ID: {request_id}")
+    # Получение контента и типа содержимого
+    content = None
+    if message.text:
+        content = message.text
+    elif message.photo:
+        content = message.photo[-1].file_id
+    elif message.video:
+        content = message.video.file_id
+
+    logging.info(f"Контент - {content}")
+    # Сохранение обращения клиента и получение request_id
+    update_client_request(request_id, content=content)
+
+    # Подтверждение отправки
+    markup = InlineKeyboardBuilder()
+    markup.add(
+        InlineKeyboardButton(text="Отправить", callback_data=f"confirm_send_{request_id}"),
+        InlineKeyboardButton(text="Редактировать", callback_data=f"edit_message_{request_id}")
+    )
+    await message.answer(
+        f"Просмотрите сообщение:\nОтправка: {content}\nФилиал: {branch}\nГотовы отправить или хотите отредактировать?",
+        reply_markup=markup.as_markup()
+    )
+    logging.info(f"Сообщение админу отправлено")
+
+# Шаг 5: Подтверждение отправки
 @dp.callback_query(F.data.startswith("confirm_send_"))
 async def confirm_send(callback_query: types.CallbackQuery):
     await callback_query.answer()  # Останавливаем анимацию загрузки
     request_id = callback_query.data.split("_")[2]
-    user_id = callback_query.from_user.id
-
-    # Получаем данные обращения
+    logging.info(f"Функция confirm_send, request_id - {request_id}")
     request_data = get_client_request(request_id)
-    content = request_data.get("content") or request_data.get("photo_id") or request_data.get("video_id")
+    user_id = request_data.get("user_id")
+    content = request_data.get("content")
     branch = request_data.get("branch")
-    logging.info(f"Выбранный Филиала - {branch}")
-
     branch_admin_id = ADMIN_CHAT_IDS.get(branch)
-    logging.info(f"ID выбранного Филиала - {branch_admin_id}")
-    await callback_query.message.answer("Ваше сообщение отправлено администратору. Ожидайте")
+
+    # Сообщение пользователю
+    await callback_query.message.answer("Спасибо за ваше обращение! Мы свяжемся с вами в ближайшее время.")
 
     # Создание клавиатуры с кнопками
     markup = InlineKeyboardBuilder()
-    logging.info(f"confirm_send: client_id - {user_id} request_id - {request_id}")
     callback_data_reply = f"reply-to-client_{user_id}_{request_id}"  # Создаем callback_data для кнопки "Ответить"
 
     markup.add(InlineKeyboardButton(text="Ответить", callback_data=callback_data_reply))
 
-    # Отправка сообщения администратору
-    await bot.send_message(
-        branch_admin_id,
-        f"Новое сообщение от клиента.\nФилиал: {branch}\n"
-        f"Контент: {content}\n\nПожалуйста, ответьте на это сообщение."
-        f"\nID клиента: {user_id}\nID обращения: {request_id}",
-        reply_markup=markup.as_markup()  # Добавляем клавиатуру к сообщению
-    )
+    # # Отправка обращения администраторам филиала и головного офиса
+    if branch_admin_id:
+        logging.info(f"Функция confirm_send, id Филиала- {branch_admin_id}")
+        await bot.send_message(branch_admin_id, f"Новое обращение от клиента{user_id}:\n"
+                                                f"{content}",
+                                                reply_markup=markup.as_markup()  # Добавляем клавиатуру к сообщению
+                                                )
+        await bot.send_message(ADMIN_CHAT_ID_MAIN, f"Новое обращение в {branch}\nот клиента - {user_id}:\n"
+                                                f"Сообщение: {content}")
+    else:
+        logging.info(f"Функция confirm_send, id Головного филиала- {ADMIN_CHAT_ID_MAIN}")
+        await bot.send_message(ADMIN_CHAT_ID_MAIN, f"Новое обращение {request_id}\nв головной офис\nот клиента - {user_id}:\n"
+                                                    f"Сообщение: {content}",
+                                                    reply_markup=markup.as_markup())
 
-    logging.info(f"Администратору выслано сообщение от клиента (ID обращения: {request_id}).")
 
-    # Отправка сообщения в головной филиал (только для просмотра)
-    await bot.send_message(
-        ADMIN_CHAT_ID_MAIN,
-        f"Просмотр сообщения от клиента.\nФилиал: {branch}\n"
-        f"Контент: {content}\n\nID клиента: {user_id}\nID обращения: {request_id}"
-    )
 
-# Шаг 5: Обработка редактирования сообщения
+# Шаг 6: Редактирование сообщения
 @dp.callback_query(F.data.startswith("edit_message_"))
-async def edit_message(callback_query: types.CallbackQuery):
+async def edit_message(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()  # Останавливаем анимацию загрузки
-    request_id = callback_query.data.split("_")[2]
-    user_id = callback_query.from_user.id
-
-    # Запрашиваем новое сообщение у пользователя
-    await callback_query.message.answer("Введите новое сообщение:")
-
-    # Сохраняем идентификатор запроса, чтобы знать, к какому обращению относится новое сообщение
-    await dp.current_state(user=callback_query.from_user.id).update_data(request_id=request_id)
-    logging.info(f"Администратору выслано сообщение после редактирования")
+    await callback_query.message.answer("Введите новое сообщение для отправки.")
+    await state.set_state(Form.waiting_for_content)  # указание состояния
 
 
-# Шаг 6: Ответ администратора клиенту
+# Шаг 7: Ответ администратора клиенту
 @dp.callback_query(F.data.startswith("reply-to-client_"))
 async def reply_to_client(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()  # Останавливаем анимацию загрузки
     data = callback_query.data.split("_")
     user_id = data[1]  # ID обращения
     request_id = data[2]  # ID клиента
-    logging.info(f"reply_to_client: client_id - {user_id} request_id - {request_id}")
+    logging.info(f"Функция!! reply_to_client: client_id - {user_id} request_id - {request_id}")
 
     # Запрашиваем новое сообщение у администратора
     await callback_query.message.answer("Введите ваше сообщение для клиента:")
@@ -178,8 +202,9 @@ async def reply_to_client(callback_query: types.CallbackQuery, state: FSMContext
     await state.update_data(request_id=request_id, client_id=user_id)
 
 
-# Шаг 7: Обработка ввода ответа администратора
-@dp.message(lambda message: str(message.chat.id) in ADMIN_CHAT_IDS.values())
+# Шаг 8: Обработка ввода ответа администратора
+@dp.message(lambda message: str(message.chat.id) in ADMIN_CHAT_IDS.values()
+            or str(message.chat.id) == ADMIN_CHAT_ID_MAIN)
 async def admin_response(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
     request_id = user_data.get("request_id")
@@ -204,7 +229,7 @@ async def admin_response(message: types.Message, state: FSMContext):
     else:
         await message.answer("Не удалось определить ID обращения или клиента.")
 
-# Шаг 8: Подтверждение отправки сообщения клиенту
+# Шаг 9: Подтверждение отправки сообщения клиенту
 @dp.callback_query(F.data.startswith("send-to-client_"))
 async def send_to_client(callback_query: types.CallbackQuery):
     await callback_query.answer()  # Останавливаем анимацию загрузки
@@ -219,6 +244,7 @@ async def send_to_client(callback_query: types.CallbackQuery):
         await callback_query.message.answer("Запрос не найден.")
         return
 
+    branch = request_data.get("branch")
     admin_message = request_data.get("admin_response")
     if admin_message:
         # Отправляем ответ клиенту
@@ -228,14 +254,14 @@ async def send_to_client(callback_query: types.CallbackQuery):
 
         # Дублирование в головной филиал
         await bot.send_message(ADMIN_CHAT_ID_MAIN,
-                               f"Ответ отправлен клиенту ID: {client_id}."
+                               f"Ответ от администратора {branch}\nотправлен клиенту ID: {client_id}."
                                f"\nID обращения: {request_id}"
                                f"\nСообщение администратора: {admin_message}")
     else:
         logging.error("Ответ администратора не найден в запросе.")
 
 
-# Шаг 9: Обработка редактирования ответа
+# Шаг 10: Обработка редактирования ответа
 @dp.callback_query(F.data.startswith("edit-response_"))
 async def edit_response(callback_query: types.CallbackQuery):
     await callback_query.answer()  # Останавливаем анимацию загрузки
