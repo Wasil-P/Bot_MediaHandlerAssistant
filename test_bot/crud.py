@@ -4,8 +4,9 @@ from psycopg2 import sql
 
 from db import get_database_connection
 
+
 # Функция для сохранения обращения клиента
-def save_client_request(user_id, content_type=None, content=None):
+def save_client_request(user_id, content_type=None, content=None, branch=None):
     conn = get_database_connection()
     cursor = conn.cursor()
     request_id = str(uuid.uuid4())  # Генерируем уникальный request_id
@@ -18,18 +19,27 @@ def save_client_request(user_id, content_type=None, content=None):
         content_field = "photo_id"
     elif content_type == "video":
         content_field = "video_id"
+    else:
+        content_field = "content"  # Или какое-то другое значение по умолчанию, если тип не определён
+
+    # Если content_field не установлен, выводим ошибку, но разрешаем сохранить без него
+    if content_field is None:
+        logging.error("Не удалось определить тип содержимого для сохранения.")
+        return None  # Если вы не хотите сохранять, если тип не определён
 
     # Вставка данных в таблицу client_requests
     try:
         cursor.execute(
-            sql.SQL("INSERT INTO client_requests (request_id, user_id, {field}) VALUES (%s, %s, %s)")
+            sql.SQL("INSERT INTO client_requests (request_id, user_id, {field}, branch) VALUES (%s, %s, %s, %s)")
             .format(field=sql.Identifier(content_field)),
-            (request_id, user_id, content)
+            (request_id, user_id, content if content else None, branch)  # Позволяем content быть None
         )
         conn.commit()
+        logging.info(f"Запрос успешно сохранен с request_id: {request_id}")
     except Exception as e:
         logging.error(f"Ошибка при сохранении обращения клиента: {e}")
         conn.rollback()
+        request_id = None  # Возвращаем None, если произошла ошибка
     finally:
         conn.close()
 
