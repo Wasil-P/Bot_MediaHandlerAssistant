@@ -86,13 +86,30 @@ async def new_request(callback_query: types.CallbackQuery, state: FSMContext):
 async def about_bot(callback_query: types.CallbackQuery):
     await callback_query.answer()  # Останавливаем анимацию загрузки
     markup = InlineKeyboardBuilder()
-    markup.add(InlineKeyboardButton(text="Направить обращение", callback_data="new_request"))
+    markup.add(InlineKeyboardButton(text="Направить обращение", callback_data="new_request"),
+               InlineKeyboardButton(text="Возврат в меню", callback_data="start"))
+
     await callback_query.message.answer(
         "Я — виртуальный помощник, созданный для направления ваших обращений в наши филиалы или Головной офис. "
         "Чем могу помочь вам сегодня?",
         reply_markup=markup.as_markup()
     )
 
+# Обработчик для возврата в главное меню
+@dp.callback_query(F.data == "start")
+async def return_to_main_menu(callback_query: types.CallbackQuery):
+    await callback_query.answer()  # Останавливаем анимацию загрузки
+    logging.info(f"Функция return_to_main_menu")
+    # Обновляем сообщение с основным меню
+    markup = InlineKeyboardBuilder()
+    markup.add(
+        InlineKeyboardButton(text="Направить обращение", callback_data="new_request"),
+        InlineKeyboardButton(text="О боте", callback_data="about_bot")
+    )
+    await callback_query.message.answer(
+        "Добрый день! Чем я могу вам помочь? Выберите один из вариантов:",
+        reply_markup=markup.as_markup()
+    )
 
 # Шаг 3: Обработка выбора филиала или головного офиса
 @dp.callback_query(F.data.startswith("branch_"))
@@ -111,11 +128,13 @@ async def select_branch(callback_query: types.CallbackQuery, state: FSMContext):
         await callback_query.message.answer(
             "Ваше обращение будет направлено в Головной офис. Вы можете отправить видео, фото или текст."
         )
+        await callback_query.message.edit_reply_markup()
     else:
         await callback_query.message.answer(
             "Ваше обращение будет направлено в выбранный филиал и дублировано в Головной офис. "
             "Вы можете отправить видео, фото или текст."
         )
+        await callback_query.message.edit_reply_markup()
     await state.set_state(Form.waiting_for_content)  # указание состояния
 
 
@@ -188,6 +207,7 @@ async def confirm_send(callback_query: types.CallbackQuery):
 
     # Сообщение пользователю
     await callback_query.message.answer("Спасибо за ваше обращение! Мы свяжемся с вами в ближайшее время.")
+    await callback_query.message.edit_reply_markup()
 
     # Создание клавиатуры с кнопками
     markup = InlineKeyboardBuilder()
