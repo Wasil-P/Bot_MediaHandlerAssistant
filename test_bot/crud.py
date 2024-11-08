@@ -1,9 +1,10 @@
 import random
 import logging
 from psycopg2 import sql
-
+from datetime import datetime, timedelta
 
 from db import get_database_connection
+
 
 # Функция для генерации уникального пятизначного request_id
 def generate_unique_request_id():
@@ -137,6 +138,34 @@ def update_client_request(request_id, **fields):
         conn.close()
 
     return True
+
+
+def fetch_requests_in_period(start_date, end_date):
+    try:
+        conn = get_database_connection()
+        cursor = conn.cursor()
+
+        # SQL-запрос для выборки данных за период
+        query = '''
+        SELECT r.request_id, r.user_id, r.branch, ri.content_type, ri.content, ri.timestamp
+        FROM requests AS r
+        JOIN request_items AS ri ON r.request_id = ri.request_id
+        WHERE ri.timestamp BETWEEN %s AND %s
+        ORDER BY ri.timestamp;
+        '''
+
+        cursor.execute(query, (start_date, end_date))
+        data = cursor.fetchall()
+
+        # Закрываем соединение
+        cursor.close()
+        conn.close()
+
+        return data
+    except Exception as e:
+        print("Ошибка при выполнении запроса:", e)
+        return []
+
 
 def delete_request_items(request_id):
     conn = get_database_connection()

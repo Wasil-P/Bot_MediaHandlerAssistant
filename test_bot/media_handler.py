@@ -12,6 +12,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from crud import save_client_request, get_client_request, update_client_request, add_request_item, delete_request_items
 from db import init_database
 from send_email import send_email
+from exсel import report_generation
+
 
 load_dotenv()
 
@@ -48,13 +50,69 @@ class Form(StatesGroup):
 # Шаг 1: Главное меню - команда /start
 @dp.message(Command("start"))
 async def start(message: types.Message):
+    user_id = message.from_user.id
+    logging.info(f"Функция start. user_id - {message.from_user.id}")
     markup = InlineKeyboardBuilder()
     markup.add(
         InlineKeyboardButton(text="Направить обращение", callback_data="new_request"),
         InlineKeyboardButton(text="О боте", callback_data="about_bot")
     )
+    if user_id == int(ADMIN_CHAT_ID_MAIN):
+        logging.info(f"Функция start. {ADMIN_CHAT_ID_MAIN}")
+        markup.add(InlineKeyboardButton(text="Отчет Excel", callback_data="report_excel"))
     await message.answer(
         "Добрый день! Чем я могу вам помочь? Выберите один из вариантов:",
+        reply_markup=markup.as_markup()
+    )
+
+
+@dp.callback_query(F.data == "report_excel")
+async def get_report_excel(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.answer()  # Останавливаем анимацию загрузки
+
+    markup = InlineKeyboardBuilder()
+    markup.add(InlineKeyboardButton(text="Отчет за день", callback_data="report_day"),
+               InlineKeyboardButton(text="Отчёт за неделю", callback_data="report_week"))
+
+    await callback_query.message.answer(
+        "Пожалуйста, выберите за какой период сформировать отчёт Excel:\n"
+        "Отчёт будет отправлен на почту Головного офиса",
+        reply_markup=markup.as_markup()
+    )
+    await state.set_state(Form.choosing_branch)  # указание состояния
+
+
+@dp.callback_query(F.data == "report_day")
+async def get_report_excel_day(callback_query: types.CallbackQuery):
+    await callback_query.answer()  # Останавливаем анимацию загрузки
+
+    markup = InlineKeyboardBuilder()
+    markup.add(InlineKeyboardButton(text="Возврат в меню", callback_data="start"))
+
+    # Генерация отчета и отправка
+    report_file = report_generation("day")
+    send_email("Отчёт за день", "Отчёт за день во вложении.",
+               os.getenv("HEAD_OFFICE_EMAIL"), file_path=report_file)
+
+    await callback_query.message.answer(
+        f"Отчёт за день сформирован и отправлен на почту {os.getenv('HEAD_OFFICE_EMAIL')}",
+        reply_markup=markup.as_markup()
+    )
+
+
+@dp.callback_query(F.data == "report_week")
+async def get_report_excel_week(callback_query: types.CallbackQuery):
+    await callback_query.answer()  # Останавливаем анимацию загрузки
+
+    markup = InlineKeyboardBuilder()
+    markup.add(InlineKeyboardButton(text="Возврат в меню", callback_data="start"))
+
+    # Генерация отчета и отправка
+    report_file = report_generation("week")
+    send_email("Отчёт за неделю", "Отчёт за неделю во вложении.", os.getenv("HEAD_OFFICE_EMAIL"), file_path=report_file)
+
+    await callback_query.message.answer(
+        f"Отчёт за неделю сформирован и отправлен на почту {os.getenv('HEAD_OFFICE_EMAIL')}",
         reply_markup=markup.as_markup()
     )
 
@@ -98,6 +156,7 @@ async def about_bot(callback_query: types.CallbackQuery):
 # Обработчик для возврата в главное меню
 @dp.callback_query(F.data == "start")
 async def return_to_main_menu(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
     await callback_query.answer()  # Останавливаем анимацию загрузки
     logging.info(f"Функция return_to_main_menu")
     # Обновляем сообщение с основным меню
@@ -106,6 +165,10 @@ async def return_to_main_menu(callback_query: types.CallbackQuery):
         InlineKeyboardButton(text="Направить обращение", callback_data="new_request"),
         InlineKeyboardButton(text="О боте", callback_data="about_bot")
     )
+    if user_id == int(ADMIN_CHAT_ID_MAIN):
+        logging.info(f"Функция start. {ADMIN_CHAT_ID_MAIN}")
+        markup.add(InlineKeyboardButton(text="Отчет Excel", callback_data="report_excel"))
+
     await callback_query.message.answer(
         "Добрый день! Чем я могу вам помочь? Выберите один из вариантов:",
         reply_markup=markup.as_markup()
