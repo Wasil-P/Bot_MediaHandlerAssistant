@@ -12,7 +12,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from crud import save_client_request, get_client_request, update_client_request, add_request_item, delete_request_items
 from db import init_database
 from send_email import send_email
-from exсel import report_generation
+from excel import report_generation
 
 
 load_dotenv()
