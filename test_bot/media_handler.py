@@ -130,7 +130,6 @@ async def get_content(message: types.Message, state: FSMContext):
     request_id = data.get("request_id")  # Получаем request_id
     logging.info(f"Функция get_content. Request ID: {request_id}")
     # Получение контента и типа содержимого
-    # Получение контента и типа содержимого
     content = None
     content_type = None
     if message.text:
@@ -142,6 +141,9 @@ async def get_content(message: types.Message, state: FSMContext):
     elif message.video:
         content = message.video.file_id
         content_type = "video"
+    elif message.voice:
+        content = message.voice.file_id
+        content_type = "voice"
 
     if content and content_type:
         add_request_item(request_id, content_type, content)  # Сохраняем контент как элемент запроса
@@ -150,8 +152,7 @@ async def get_content(message: types.Message, state: FSMContext):
         # Получение всего контента, связанного с request_id
     request_data = get_client_request(request_id)
     content_items = "\n".join(
-        f"{item['content_type']}: {item['content']}" for item in request_data.get("items", [])
-    )
+        item['content_type'] for item in request_data.get("items", []))
 
     # Подтверждение отправки
     markup = InlineKeyboardBuilder()
@@ -161,7 +162,7 @@ async def get_content(message: types.Message, state: FSMContext):
         InlineKeyboardButton(text="Добавить", callback_data=f"add_content_{request_id}")
     )
     await message.answer(
-        f"Просмотрите сообщение:\nОтправка: {content_items}\nФилиал: {branch}\nГотовы отправить или хотите отредактировать?",
+        f"Просмотрите сообщение:\nОтправка:\n{content_items}\nФилиал: {branch}\nГотовы отправить или хотите отредактировать?",
         reply_markup=markup.as_markup()
     )
     logging.info(f"Состояния выбора меню")
@@ -197,7 +198,7 @@ async def confirm_send(callback_query: types.CallbackQuery):
     # Инициализация списка для медиафайлов
     media_group = []
     # Определение текстовой части сообщения
-    main_text = None
+    main_text_list = []
 
     # Проверка и добавление контента в зависимости от типов
     for item in request_data.get("items", []):
@@ -209,9 +210,13 @@ async def confirm_send(callback_query: types.CallbackQuery):
             media_group.append(types.InputMediaPhoto(media=content))
         elif content_type == "video":
             media_group.append(types.InputMediaVideo(media=content))
+        elif content_type == "voice":
+            media_group.append(types.InputMediaAudio(media=content))
         elif content_type == "text":
-            main_text = content
+            main_text_list.append(content)
 
+
+    main_text = "\n".join(item for item in main_text_list)
         # Текст для email
     send_subject = f"Новое обращение от клиента {user_id}"
     send_body_admin = f"Новое обращение от клиента {user_id}:\n {content_items}"
@@ -222,7 +227,7 @@ async def confirm_send(callback_query: types.CallbackQuery):
 
     send_body_admin_text = f"Новое обращение от клиента {user_id}:\n {main_text}"
     send_body_head_office_duplicate_text = (f"Новое обращение в {branch}\nот клиента - {user_id}."
-                                            f"\nСообщение: {main_text}")
+                                            f"\nСообщение:\n{main_text}")
 
     if branch_admin_id and branch_admin_email:
         # 1. Сценарий: отправка только текста
@@ -263,24 +268,6 @@ async def confirm_send(callback_query: types.CallbackQuery):
         logging.info(f"Функция confirm_send, отправка головному филиалу")
         await bot.send_message(ADMIN_CHAT_ID_MAIN, send_body_head_office,
                                                     reply_markup=markup.as_markup())
-    # # # Отправка обращения администраторам филиала и головного офиса
-    # if branch_admin_id and branch_admin_email:
-    #     logging.info(f"Функция confirm_send, id Филиала- {branch_admin_id}")
-    #     await bot.send_message(branch_admin_id, send_body_admin,
-    #                                             reply_markup=markup.as_markup()  # Добавляем клавиатуру к сообщению
-    #                                             )
-    #     await bot.send_message(ADMIN_CHAT_ID_MAIN, send_body_head_office_duplicate)
-    #     # Отправка email
-    #     send_email(send_subject, send_body_admin, branch_admin_email)
-    #     send_email(send_subject, send_body_head_office_duplicate, os.getenv("HEAD_OFFICE_EMAIL"))
-    #
-    # else:
-    #     logging.info(f"Функция confirm_send, id Головного филиала- {ADMIN_CHAT_ID_MAIN}")
-    #     await bot.send_message(ADMIN_CHAT_ID_MAIN, send_body_head_office,
-    #                                                 reply_markup=markup.as_markup())
-    #     # Отправка email
-    #     send_email(send_subject, send_body_head_office, os.getenv("HEAD_OFFICE_EMAIL"))
-
 
 
 # Шаг 6: Редактирование сообщения

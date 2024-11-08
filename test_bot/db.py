@@ -49,7 +49,7 @@ def init_database():
         CREATE TABLE IF NOT EXISTS request_items (
         item_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),   -- Уникальный идентификатор элемента с авто-генерацией UUID
         request_id INT REFERENCES requests(request_id) ON DELETE CASCADE,  -- Связь с таблицей requests
-        content_type TEXT CHECK (content_type IN ('text', 'photo', 'video')), -- Тип содержимого
+        content_type TEXT CHECK (content_type IN ('text', 'photo', 'video', 'voice')), -- Тип содержимого
         content TEXT,                           -- Текст или ID файла для фото/видео
         timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP  -- Дата и время добавления элемента
 );

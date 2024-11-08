@@ -52,6 +52,11 @@ def add_request_item(request_id, content_type, content):
     conn = get_database_connection()
     cursor = conn.cursor()
 
+    # Проверка, что content_type соответствует одному из допустимых значений
+    if content_type not in ['text', 'photo', 'video', 'voice']:
+        logging.error(f"Некорректный тип контента: {content_type}")
+        return
+
     try:
         # Вставка элемента в таблицу request_items
         cursor.execute(
