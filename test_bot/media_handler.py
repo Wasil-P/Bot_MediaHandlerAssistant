@@ -177,9 +177,13 @@ async def confirm_send(callback_query: types.CallbackQuery):
     branch = request_data.get("branch")
     branch_admin_id = ADMIN_CHAT_IDS.get(branch)
     branch_admin_email = ADMIN_EMAIL.get(branch)
+    # content_items = "\n".join(
+    #     f"{item['content_type']}: {item['content']}" for item in request_data.get("items", [])
+    # )
     content_items = "\n".join(
-        f"{item['content_type']}: {item['content']}" for item in request_data.get("items", [])
+        item['content_type'] for item in request_data.get("items", [])
     )
+    logging.info(f"Функция confirm_sen. Значение переменной content_items - {content_items}")
 
     # Сообщение пользователю
     await callback_query.message.answer("Спасибо за ваше обращение! Мы свяжемся с вами в ближайшее время.")
@@ -190,7 +194,25 @@ async def confirm_send(callback_query: types.CallbackQuery):
 
     markup.add(InlineKeyboardButton(text="Ответить", callback_data=callback_data_reply))
 
-    # Текст для email
+    # Инициализация списка для медиафайлов
+    media_group = []
+    # Определение текстовой части сообщения
+    main_text = None
+
+    # Проверка и добавление контента в зависимости от типов
+    for item in request_data.get("items", []):
+        content_type = item.get("content_type")
+        content = item.get("content")
+
+        # Обработка в зависимости от типа контента
+        if content_type == "photo":
+            media_group.append(types.InputMediaPhoto(media=content))
+        elif content_type == "video":
+            media_group.append(types.InputMediaVideo(media=content))
+        elif content_type == "text":
+            main_text = content
+
+        # Текст для email
     send_subject = f"Новое обращение от клиента {user_id}"
     send_body_admin = f"Новое обращение от клиента {user_id}:\n {content_items}"
     send_body_head_office_duplicate = (f"Новое обращение в {branch}\nот клиента - {user_id}."
@@ -198,23 +220,66 @@ async def confirm_send(callback_query: types.CallbackQuery):
     send_body_head_office = (f"Новое обращение {request_id}\nв головной офис\nот клиента - {user_id}."
                              f"\nСообщение: {content_items}")
 
-    # # Отправка обращения администраторам филиала и головного офиса
+    send_body_admin_text = f"Новое обращение от клиента {user_id}:\n {main_text}"
+    send_body_head_office_duplicate_text = (f"Новое обращение в {branch}\nот клиента - {user_id}."
+                                            f"\nСообщение: {main_text}")
+
     if branch_admin_id and branch_admin_email:
-        logging.info(f"Функция confirm_send, id Филиала- {branch_admin_id}")
-        await bot.send_message(branch_admin_id, send_body_admin,
-                                                reply_markup=markup.as_markup()  # Добавляем клавиатуру к сообщению
-                                                )
-        await bot.send_message(ADMIN_CHAT_ID_MAIN, send_body_head_office_duplicate)
-        # Отправка email
+        # 1. Сценарий: отправка только текста
+        if not media_group and main_text:
+            logging.info(f"отправка только текста. Текст - {main_text}")
+            await bot.send_message(branch_admin_id, send_body_admin_text, reply_markup=markup.as_markup())
+            await bot.send_message(ADMIN_CHAT_ID_MAIN, send_body_head_office_duplicate_text)
+
+        # 2. Сценарий: отправка только изображения или видео
+        elif media_group and not main_text:
+            logging.info(f"отправка только изображения или видео. Текст - {main_text}")
+            await bot.send_media_group(branch_admin_id, media_group)  # Отправка медиа-группы
+            # Отправляем кнопки "Ответить" как отдельное сообщение
+            await bot.send_message(branch_admin_id, send_body_admin, reply_markup=markup.as_markup())
+
+            await bot.send_media_group(ADMIN_CHAT_ID_MAIN, media_group)  # Отправка медиа-группы
+            # Отправляем кнопки "Ответить" как отдельное сообщение
+            await bot.send_message(ADMIN_CHAT_ID_MAIN,
+                                   send_body_head_office_duplicate)
+
+        # 3. Сценарий: отправка текста вместе с изображением и/или видео
+        elif media_group and main_text:
+            logging.info(f"отправка текста вместе с изображением и/или видео. Текст - {main_text}")
+            # Отправляем текстовое сообщение с кнопкой "Ответить"
+            await bot.send_message(branch_admin_id, send_body_admin_text, reply_markup=markup.as_markup())
+            # Отправка медиа-группы с изображениями и видео
+            await bot.send_media_group(branch_admin_id, media_group)
+
+            await bot.send_message(ADMIN_CHAT_ID_MAIN, send_body_head_office_duplicate_text)
+            # Отправка медиа-группы с изображениями и видео
+            await bot.send_media_group(ADMIN_CHAT_ID_MAIN, media_group)
+
+            # Отправка email
         send_email(send_subject, send_body_admin, branch_admin_email)
         send_email(send_subject, send_body_head_office_duplicate, os.getenv("HEAD_OFFICE_EMAIL"))
 
     else:
-        logging.info(f"Функция confirm_send, id Головного филиала- {ADMIN_CHAT_ID_MAIN}")
+        logging.info(f"Функция confirm_send, отправка головному филиалу")
         await bot.send_message(ADMIN_CHAT_ID_MAIN, send_body_head_office,
                                                     reply_markup=markup.as_markup())
-        # Отправка email
-        send_email(send_subject, send_body_head_office, os.getenv("HEAD_OFFICE_EMAIL"))
+    # # # Отправка обращения администраторам филиала и головного офиса
+    # if branch_admin_id and branch_admin_email:
+    #     logging.info(f"Функция confirm_send, id Филиала- {branch_admin_id}")
+    #     await bot.send_message(branch_admin_id, send_body_admin,
+    #                                             reply_markup=markup.as_markup()  # Добавляем клавиатуру к сообщению
+    #                                             )
+    #     await bot.send_message(ADMIN_CHAT_ID_MAIN, send_body_head_office_duplicate)
+    #     # Отправка email
+    #     send_email(send_subject, send_body_admin, branch_admin_email)
+    #     send_email(send_subject, send_body_head_office_duplicate, os.getenv("HEAD_OFFICE_EMAIL"))
+    #
+    # else:
+    #     logging.info(f"Функция confirm_send, id Головного филиала- {ADMIN_CHAT_ID_MAIN}")
+    #     await bot.send_message(ADMIN_CHAT_ID_MAIN, send_body_head_office,
+    #                                                 reply_markup=markup.as_markup())
+    #     # Отправка email
+    #     send_email(send_subject, send_body_head_office, os.getenv("HEAD_OFFICE_EMAIL"))
 
 
 
