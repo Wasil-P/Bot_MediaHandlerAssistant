@@ -11,6 +11,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from crud import save_client_request, get_client_request, update_client_request, add_request_item, delete_request_items
 from db import init_database
+from send_email import send_email
 
 load_dotenv()
 
@@ -18,6 +19,12 @@ ADMIN_CHAT_IDS = {
     "Филиал 1": os.getenv("ADMIN_ID_1"),
     "Филиал 2": os.getenv("ADMIN_ID_2"),
     "Филиал 3": os.getenv("ADMIN_ID_3"),
+}
+
+ADMIN_EMAIL = {
+    "Филиал 1": os.getenv("ADMIN_EMAIL_1"),
+    "Филиал 2": os.getenv("ADMIN_EMAIL_2"),
+    "Филиал 3": os.getenv("ADMIN_EMAIL_3"),
 }
 
 ADMIN_CHAT_ID_MAIN = os.getenv("ADMIN_ID_MAIN") # ID галовного филиала
@@ -169,6 +176,7 @@ async def confirm_send(callback_query: types.CallbackQuery):
     user_id = request_data.get("user_id")
     branch = request_data.get("branch")
     branch_admin_id = ADMIN_CHAT_IDS.get(branch)
+    branch_admin_email = ADMIN_EMAIL.get(branch)
     content_items = "\n".join(
         f"{item['content_type']}: {item['content']}" for item in request_data.get("items", [])
     )
@@ -182,20 +190,31 @@ async def confirm_send(callback_query: types.CallbackQuery):
 
     markup.add(InlineKeyboardButton(text="Ответить", callback_data=callback_data_reply))
 
+    # Текст для email
+    send_subject = f"Новое обращение от клиента {user_id}"
+    send_body_admin = f"Новое обращение от клиента {user_id}:\n {content_items}"
+    send_body_head_office_duplicate = (f"Новое обращение в {branch}\nот клиента - {user_id}."
+                                       f"\nСообщение: {content_items}")
+    send_body_head_office = (f"Новое обращение {request_id}\nв головной офис\nот клиента - {user_id}."
+                             f"\nСообщение: {content_items}")
+
     # # Отправка обращения администраторам филиала и головного офиса
-    if branch_admin_id:
+    if branch_admin_id and branch_admin_email:
         logging.info(f"Функция confirm_send, id Филиала- {branch_admin_id}")
-        await bot.send_message(branch_admin_id, f"Новое обращение от клиента {user_id}:\n"
-                                                f"{content_items}",
+        await bot.send_message(branch_admin_id, send_body_admin,
                                                 reply_markup=markup.as_markup()  # Добавляем клавиатуру к сообщению
                                                 )
-        await bot.send_message(ADMIN_CHAT_ID_MAIN, f"Новое обращение в {branch}\nот клиента - {user_id}.\n"
-                                                f"Сообщение: {content_items}")
+        await bot.send_message(ADMIN_CHAT_ID_MAIN, send_body_head_office_duplicate)
+        # Отправка email
+        send_email(send_subject, send_body_admin, branch_admin_email)
+        send_email(send_subject, send_body_head_office_duplicate, os.getenv("HEAD_OFFICE_EMAIL"))
+
     else:
         logging.info(f"Функция confirm_send, id Головного филиала- {ADMIN_CHAT_ID_MAIN}")
-        await bot.send_message(ADMIN_CHAT_ID_MAIN, f"Новое обращение {request_id}\nв головной офис\nот клиента - {user_id}.\n"
-                                                    f"Сообщение: {content_items}",
+        await bot.send_message(ADMIN_CHAT_ID_MAIN, send_body_head_office,
                                                     reply_markup=markup.as_markup())
+        # Отправка email
+        send_email(send_subject, send_body_head_office, os.getenv("HEAD_OFFICE_EMAIL"))
 
 
 
@@ -285,6 +304,10 @@ async def send_to_client(callback_query: types.CallbackQuery):
 
     branch = request_data.get("branch")
     admin_message = request_data.get("admin_response")
+    send_subject = f"Новое обращение от клиента {client_id}"
+    send_body_head_office_duplicate = (f"Ответ от администратора {branch}\nотправлен клиенту ID: {client_id}."
+                                       f"\nID обращения: {request_id}"
+                                        f"\nСообщение администратора: {admin_message}")
     if admin_message:
         # Отправляем ответ клиенту
         await bot.send_message(client_id, f"Ответ от администратора: {admin_message}")
@@ -292,10 +315,9 @@ async def send_to_client(callback_query: types.CallbackQuery):
         await callback_query.message.answer("Ваш ответ отправлен клиенту.")
 
         # Дублирование в головной филиал
-        await bot.send_message(ADMIN_CHAT_ID_MAIN,
-                               f"Ответ от администратора {branch}\nотправлен клиенту ID: {client_id}."
-                               f"\nID обращения: {request_id}"
-                               f"\nСообщение администратора: {admin_message}")
+        await bot.send_message(ADMIN_CHAT_ID_MAIN, send_body_head_office_duplicate)
+        send_email(send_subject, send_body_head_office_duplicate, os.getenv("HEAD_OFFICE_EMAIL"))
+
     else:
         logging.error("Ответ администратора не найден в запросе.")
 
