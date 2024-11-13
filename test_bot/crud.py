@@ -1,92 +1,130 @@
-import uuid
+import random
 import logging
 from psycopg2 import sql
+from datetime import datetime, timedelta
 
 from db import get_database_connection
 
 
-# Функция для сохранения обращения клиента
-def save_client_request(user_id, content_type=None, content=None, branch=None):
+# Функция для генерации уникального пятизначного request_id
+def generate_unique_request_id():
     conn = get_database_connection()
     cursor = conn.cursor()
-    request_id = str(uuid.uuid4())  # Генерируем уникальный request_id
+    unique_id = None
 
-    # Определяем, какое поле заполнить (текст, фото или видео)
-    content_field = None
-    if content_type == "text":
-        content_field = "content"
-    elif content_type == "photo":
-        content_field = "photo_id"
-    elif content_type == "video":
-        content_field = "video_id"
-    else:
-        content_field = "content"  # Или какое-то другое значение по умолчанию, если тип не определён
+    # Генерация уникального числа
+    while True:
+        potential_id = random.randint(100000, 999999)  # Генерация случайного числа
+        cursor.execute("SELECT 1 FROM requests WHERE request_id = %s", (potential_id,))
+        if not cursor.fetchone():  # Если не найдено совпадений, число уникально
+            unique_id = potential_id
+            break
 
-    # Если content_field не установлен, выводим ошибку, но разрешаем сохранить без него
-    if content_field is None:
-        logging.error("Не удалось определить тип содержимого для сохранения.")
-        return None  # Если вы не хотите сохранять, если тип не определён
+    cursor.close()
+    conn.close()
+    return unique_id
 
-    # Вставка данных в таблицу client_requests
+# Функция для сохранения обращения клиента
+def save_client_request(user_id, branch=None):
+    conn = get_database_connection()
+    cursor = conn.cursor()
+    request_id = generate_unique_request_id()  # Генерируем уникальный request_id
+
     try:
+        # Вставка данных в таблицу requests
         cursor.execute(
-            sql.SQL("INSERT INTO client_requests (request_id, user_id, {field}, branch) VALUES (%s, %s, %s, %s)")
-            .format(field=sql.Identifier(content_field)),
-            (request_id, user_id, content if content else None, branch)  # Позволяем content быть None
+            "INSERT INTO requests (request_id, user_id, branch) VALUES (%s, %s, %s)",
+            (request_id, user_id, branch)
         )
         conn.commit()
         logging.info(f"Запрос успешно сохранен с request_id: {request_id}")
     except Exception as e:
         logging.error(f"Ошибка при сохранении обращения клиента: {e}")
         conn.rollback()
-        request_id = None  # Возвращаем None, если произошла ошибка
+        request_id = None
     finally:
+        cursor.close()
         conn.close()
 
     return request_id
 
+# Функция для добавления элементов (текста, фото, видео) к запросу
+def add_request_item(request_id, content_type, content):
+    conn = get_database_connection()
+    cursor = conn.cursor()
+
+    # Проверка, что content_type соответствует одному из допустимых значений
+    if content_type not in ['text', 'photo', 'video', 'voice']:
+        logging.error(f"Некорректный тип контента: {content_type}")
+        return
+
+    try:
+        # Вставка элемента в таблицу request_items
+        cursor.execute(
+            "INSERT INTO request_items (request_id, content_type, content) VALUES (%s, %s, %s)",
+            (request_id, content_type, content)
+        )
+        conn.commit()
+        logging.info(f"Элемент '{content_type}' успешно добавлен к запросу с ID {request_id}")
+    except Exception as e:
+        logging.error(f"Ошибка при добавлении элемента к запросу с ID {request_id}: {e}")
+        conn.rollback()
+    finally:
+        cursor.close()
+        conn.close()
 
 # Функция для получения данных обращения по request_id
 def get_client_request(request_id):
     conn = get_database_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM client_requests WHERE request_id = %s", (request_id,))
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        return {
-            "request_id": row[0],
-            "user_id": row[1],
-            "content": row[2],
-            "photo_id": row[3],
-            "video_id": row[4],
-            "branch": row[5],
-            "created_at": row[6],
-            "admin_response": row[7]
-        }
-    return None
 
+    try:
+        # Получение информации о запросе
+        cursor.execute("SELECT * FROM requests WHERE request_id = %s", (request_id,))
+        request = cursor.fetchone()
 
+        # Получение всех элементов запроса
+        cursor.execute("SELECT content_type, content FROM request_items WHERE request_id = %s", (request_id,))
+        items = cursor.fetchall()
+
+        if request:
+            return {
+                "request_id": request[0],
+                "user_id": request[1],
+                "branch": request[2],
+                "timestamp": request[3],
+                "admin_response": request[4],
+                "items": [{"content_type": item[0], "content": item[1]} for item in items]
+            }
+        else:
+            return None
+    except Exception as e:
+        logging.error(f"Ошибка при получении данных запроса с ID {request_id}: {e}")
+        return None
+    finally:
+        cursor.close()
+        conn.close()
+
+# Функция для обновления обращения клиента
 def update_client_request(request_id, **fields):
     conn = get_database_connection()
     cursor = conn.cursor()
 
-    # Проверяем, существует ли запрос с указанным request_id
-    cursor.execute("SELECT COUNT(1) FROM client_requests WHERE request_id = %s", (request_id,))
-    exists = cursor.fetchone()[0]
-
-    if not exists:
-        logging.error(f"Запрос с ID {request_id} не найден в базе данных.")
-        conn.close()
-        return False
-
-    # Формируем SQL-запрос
-    set_clause = ', '.join(f"{field} = %s" for field in fields.keys())
-    values = list(fields.values()) + [request_id]
-
     try:
+        # Проверяем, существует ли запрос с указанным request_id
+        cursor.execute("SELECT COUNT(1) FROM requests WHERE request_id = %s", (request_id,))
+        exists = cursor.fetchone()[0]
+
+        if not exists:
+            logging.error(f"Запрос с ID {request_id} не найден в базе данных.")
+            return False
+
+        # Обновление основного запроса
+        set_clause = ', '.join(f"{field} = %s" for field in fields.keys())
+        values = list(fields.values()) + [request_id]
+
         cursor.execute(
-            sql.SQL("UPDATE client_requests SET " + set_clause + " WHERE request_id = %s"),
+            sql.SQL("UPDATE requests SET " + set_clause + " WHERE request_id = %s"),
             values
         )
         conn.commit()
@@ -96,9 +134,45 @@ def update_client_request(request_id, **fields):
         conn.rollback()
         return False
     finally:
+        cursor.close()
         conn.close()
 
     return True
 
 
+def fetch_requests_in_period(start_date, end_date):
+    try:
+        conn = get_database_connection()
+        cursor = conn.cursor()
 
+        # SQL-запрос для выборки данных за период
+        query = '''
+        SELECT r.request_id, r.user_id, r.branch, ri.content_type, ri.content, ri.timestamp
+        FROM requests AS r
+        JOIN request_items AS ri ON r.request_id = ri.request_id
+        WHERE ri.timestamp BETWEEN %s AND %s
+        ORDER BY ri.timestamp;
+        '''
+
+        cursor.execute(query, (start_date, end_date))
+        data = cursor.fetchall()
+
+        # Закрываем соединение
+        cursor.close()
+        conn.close()
+
+        return data
+    except Exception as e:
+        print("Ошибка при выполнении запроса:", e)
+        return []
+
+
+def delete_request_items(request_id):
+    conn = get_database_connection()
+    cursor = conn.cursor()
+    # Здесь выполняется SQL-запрос на удаление записей из таблицы request_items
+    cursor.execute('''
+        DELETE FROM request_items
+        WHERE request_id = %s;
+    ''', (request_id,))
+    conn.commit()

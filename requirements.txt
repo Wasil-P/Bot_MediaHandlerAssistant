@@ -20,6 +20,8 @@ attrs==24.2.0
     # via aiohttp
 certifi==2024.8.30
     # via aiogram
+et-xmlfile==2.0.0
+    # via openpyxl
 frozenlist==1.5.0
     # via
     #   aiohttp
@@ -32,6 +34,8 @@ multidict==6.1.0
     # via
     #   aiohttp
     #   yarl
+openpyxl==3.1.5
+    # via -r requirements.in
 propcache==0.2.0
     # via yarl
 psycopg2==2.9.10
