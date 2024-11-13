@@ -33,7 +33,6 @@ ADMIN_CHAT_ID_MAIN = os.getenv("ADMIN_ID_MAIN") # ID галовного фили
 
 logging.basicConfig(level=logging.INFO)
 
-# Инициализация хранилища и бота
 storage = MemoryStorage()
 bot = Bot(token=os.getenv("TOKEN_TG_TEST"))
 dp = Dispatcher(storage=storage)  # Передаем storage как именованный аргумент
@@ -45,6 +44,7 @@ class Form(StatesGroup):
     choosing_branch = State()
     waiting_for_content = State()
     waiting_for_response = State()
+    submission_completed = State()
 
 
 # Шаг 1: Главное меню - команда /start
@@ -207,6 +207,12 @@ async def select_branch(callback_query: types.CallbackQuery, state: FSMContext):
                             and str(message.chat.id) != ADMIN_CHAT_ID_MAIN
                             and str(message.chat.id) not in ADMIN_CHAT_IDS.values())
 async def get_content(message: types.Message, state: FSMContext):
+    # Проверяем, завершено ли отправление
+    current_state = await state.get_state()
+    if current_state == Form.submission_completed.state:
+        # Если завершено, игнорируем или отправляем уведомление
+        await message.answer("Ваше обращение уже принято, добавление нового контента невозможно.")
+        return
     data = await state.get_data()
     branch = data.get("selected_branch")
     request_id = data.get("request_id")  # Получаем request_id
@@ -234,7 +240,7 @@ async def get_content(message: types.Message, state: FSMContext):
         # Получение всего контента, связанного с request_id
     request_data = get_client_request(request_id)
     content_items = "\n".join(
-        item['content_type'] for item in request_data.get("items", []))
+            f"{item['content_type']}: {item['content']}" for item in request_data.get("items", []))
 
     # Подтверждение отправки
     markup = InlineKeyboardBuilder()
@@ -251,7 +257,8 @@ async def get_content(message: types.Message, state: FSMContext):
 
 # Шаг 5: Подтверждение отправки
 @dp.callback_query(F.data.startswith("confirm_send_"))
-async def confirm_send(callback_query: types.CallbackQuery):
+async def confirm_send(callback_query: types.CallbackQuery, state: FSMContext):
+    await state.set_state(Form.submission_completed)  # Ставим финальное состояние
     await callback_query.answer()  # Останавливаем анимацию загрузки
     request_id = callback_query.data.split("_")[2]
     logging.info(f"Функция confirm_send, request_id - {request_id}")
@@ -300,7 +307,7 @@ async def confirm_send(callback_query: types.CallbackQuery):
 
 
     main_text = "\n".join(item for item in main_text_list)
-        # Текст для email
+        # Текст
     send_subject = f"Новое обращение от клиента {user_id}"
     send_body_admin = f"Новое обращение от клиента {user_id}:\n {content_items}"
     send_body_head_office_duplicate = (f"Новое обращение в {branch}\nот клиента - {user_id}."
@@ -351,6 +358,7 @@ async def confirm_send(callback_query: types.CallbackQuery):
         logging.info(f"Функция confirm_send, отправка головному филиалу")
         await bot.send_message(ADMIN_CHAT_ID_MAIN, send_body_head_office,
                                                     reply_markup=markup.as_markup())
+        send_email(send_subject, send_body_head_office_duplicate, os.getenv("HEAD_OFFICE_EMAIL"))
 
 
 # Шаг 6: Редактирование сообщения
@@ -367,6 +375,7 @@ async def edit_message(callback_query: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data.startswith("add_content_"))
 async def add_more_content(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()  # Останавливаем анимацию загрузки
+    logging.info(f"Запуск функции add_more_content")
     request_id = callback_query.data.split("_")[2]
 
     # Сообщаем пользователю, что он может добавить еще одно сообщение, фото или видео
